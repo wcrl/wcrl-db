@@ -1,20 +1,4 @@
-"""Competitor and profile persistence — the `competitors`/`competitor_profiles` tables.
-
-Purpose: the only place that writes SQL against these two tables; every
-consumer of this library calls these methods instead of embedding queries.
-Current state: fully implemented.
-TODO: none open.
-Notes: `upsert`/`upsert_profile` only run the write and re-read the row —
-conflict/validation decisions (is this a new account? is the email already
-claimed by someone else?) are app-level judgment calls, not persistence
-concerns, so they stay in the consuming app (the WCRL Discord bot's
-`cogs/registration.py`) and are expressed using `get`/`get_by_email`/
-`exists` before the upsert runs.
-
-Every method returns plain `dict`s, never `aiosqlite.Row`, with
-`registered_at`/`created_at`/`updated_at` parsed into `datetime` objects —
-see `API.md` for the exact shape of each return value.
-"""
+"""Competitor and profile persistence — the `competitors`/`competitor_profiles` tables. See API.md."""
 
 from __future__ import annotations
 
@@ -50,6 +34,9 @@ class CompetitorRepository:
         )
         return row is not None
 
+    # Only runs the write and re-reads the row — conflict/validation decisions
+    # (new account? email already claimed by someone else?) are the caller's
+    # job, expressed with get/get_by_email/exists before this runs.
     async def upsert(self, discord_id: int, full_name: str, school_email: str) -> dict[str, Any]:
         """Insert or refresh a competitor's row; returns the resulting row."""
         await self._db.execute(

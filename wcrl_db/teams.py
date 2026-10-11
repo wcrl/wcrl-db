@@ -1,21 +1,4 @@
-"""Team and team-membership persistence — the `teams`/`team_members` tables.
-
-Purpose: the only place that writes SQL against these two tables; every
-consumer of this library calls these methods instead of embedding queries.
-Current state: fully implemented.
-TODO: none open.
-Notes: `normalize_team_name` lives here (not in a consuming app) because it
-defines what `name_normalized` means — `get_by_name`/`create` apply it
-internally so every caller gets case/whitespace-insensitive matching for
-free instead of having to remember to normalize first. The WCRL Discord
-bot re-exports it (`from wcrl_db.teams import normalize_team_name`) since
-display-name validation and channel-name slugifying are UI concerns that
-belong in that app, not here.
-
-Every method returns plain `dict`s, never `aiosqlite.Row`, with
-`created_at` parsed into a `datetime` wherever a full team row comes
-back — see `API.md` for the exact shape of each return value.
-"""
+"""Team and team-membership persistence — the `teams`/`team_members` tables. See API.md."""
 
 from __future__ import annotations
 
@@ -27,6 +10,8 @@ if TYPE_CHECKING:
     from .connection import Database
 
 
+# get_by_name/create apply this internally so every caller gets
+# case/whitespace-insensitive matching for free.
 def normalize_team_name(name: str) -> str:
     """Case/whitespace-insensitive key stored in `teams.name_normalized`."""
     return " ".join(name.split()).casefold()

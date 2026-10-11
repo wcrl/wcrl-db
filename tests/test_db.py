@@ -1,9 +1,4 @@
-"""Schema constraint tests — the invariants every consumer leans on.
-
-Current state: fully implemented, covers competitors/teams/team_members.
-TODO: none open.
-Notes: none.
-"""
+"""Schema constraint tests — the invariants every consumer leans on."""
 
 from __future__ import annotations
 

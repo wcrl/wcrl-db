@@ -1,11 +1,4 @@
-"""Small internal key/value persistence — the `bot_state` table.
-
-Purpose: the only place that writes SQL against `bot_state`.
-Current state: fully implemented.
-TODO: none open.
-Notes: generic get/set over text keys and values; it has no idea the only
-key in use today is `last_announced_changelog` (see `bot.py`).
-"""
+"""Small internal key/value persistence — the `bot_state` table."""
 
 from __future__ import annotations
 

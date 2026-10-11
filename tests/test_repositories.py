@@ -1,13 +1,4 @@
-"""Tests for the `wcrl_db` repositories — this library's whole public surface.
-
-Current state: fully implemented — covers `CompetitorRepository`,
-`TeamRepository`, `BotStateRepository`, and `Database`'s read-only mode.
-TODO: none open.
-Notes: schema-constraint tests (uniqueness, cascades, foreign keys) live in
-`tests/test_db.py` and deliberately bypass this layer with raw SQL; these
-tests instead check that each repository method runs the right query and
-returns the right shape.
-"""
+"""Tests for the `wcrl_db` repositories — this library's whole public surface."""
 
 from __future__ import annotations
 

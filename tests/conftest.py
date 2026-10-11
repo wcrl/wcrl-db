@@ -1,10 +1,4 @@
-"""Shared pytest fixtures.
-
-Current state: fully implemented (single `db` fixture).
-TODO: none open.
-Notes: assumes `wcrl_db` is installed (`pip install -e .[dev]`), same as any
-consumer of this library — no sys.path hacking needed.
-"""
+"""Shared pytest fixtures."""
 
 from __future__ import annotations
 
