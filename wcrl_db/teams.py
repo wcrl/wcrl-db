@@ -11,13 +11,17 @@ free instead of having to remember to normalize first. The WCRL Discord
 bot re-exports it (`from wcrl_db.teams import normalize_team_name`) since
 display-name validation and channel-name slugifying are UI concerns that
 belong in that app, not here.
+
+Every method returns plain `dict`s, never `aiosqlite.Row`, with
+`created_at` parsed into a `datetime` wherever a full team row comes
+back — see `API.md` for the exact shape of each return value.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import aiosqlite
+from ._util import parse_timestamps
 
 if TYPE_CHECKING:
     from .connection import Database
@@ -39,12 +43,13 @@ class TeamRepository:
     def __init__(self, db: "Database") -> None:
         self._db = db
 
-    async def get_by_id(self, team_id: int) -> aiosqlite.Row | None:
-        return await self._db.fetch_one("SELECT * FROM teams WHERE team_id = ?", (team_id,))
+    async def get_by_id(self, team_id: int) -> dict[str, Any] | None:
+        row = await self._db.fetch_one("SELECT * FROM teams WHERE team_id = ?", (team_id,))
+        return parse_timestamps(row, "created_at") if row else None
 
-    async def get_for_member(self, discord_id: int) -> aiosqlite.Row | None:
+    async def get_for_member(self, discord_id: int) -> dict[str, Any] | None:
         """The team a competitor belongs to, or None if they aren't on one."""
-        return await self._db.fetch_one(
+        row = await self._db.fetch_one(
             """
             SELECT teams.* FROM teams
             JOIN team_members ON team_members.team_id = teams.team_id
@@ -52,21 +57,24 @@ class TeamRepository:
             """,
             (discord_id,),
         )
+        return parse_timestamps(row, "created_at") if row else None
 
-    async def get_by_name(self, name: str) -> aiosqlite.Row | None:
+    async def get_by_name(self, name: str) -> dict[str, Any] | None:
         """Look up a team by display name (case/whitespace-insensitive)."""
-        return await self._db.fetch_one(
+        row = await self._db.fetch_one(
             "SELECT * FROM teams WHERE name_normalized = ?", (normalize_team_name(name),)
         )
+        return parse_timestamps(row, "created_at") if row else None
 
-    async def get_by_channel(self, channel_id: int) -> aiosqlite.Row | None:
-        return await self._db.fetch_one(
+    async def get_by_channel(self, channel_id: int) -> dict[str, Any] | None:
+        row = await self._db.fetch_one(
             "SELECT * FROM teams WHERE channel_id = ?", (channel_id,)
         )
+        return parse_timestamps(row, "created_at") if row else None
 
     async def create(
         self, name: str, role_id: int, channel_id: int, created_by: int
-    ) -> aiosqlite.Row:
+    ) -> dict[str, Any]:
         """Insert a new team; returns the resulting row."""
         cursor = await self._db.execute(
             """
@@ -97,7 +105,7 @@ class TeamRepository:
         )
         return row["n"]
 
-    async def list_members(self, team_id: int) -> list[aiosqlite.Row]:
+    async def list_members(self, team_id: int) -> list[dict[str, Any]]:
         """A team's roster, oldest member first."""
         return await self._db.fetch_all(
             """
@@ -110,7 +118,7 @@ class TeamRepository:
             (team_id,),
         )
 
-    async def list_with_member_counts(self, order: str = "name") -> list[aiosqlite.Row]:
+    async def list_with_member_counts(self, order: str = "name") -> list[dict[str, Any]]:
         """Every team with its member count, ordered by `name` or `size` (largest first)."""
         order_clause = {
             "name": "teams.name COLLATE NOCASE",
@@ -126,7 +134,7 @@ class TeamRepository:
             """
         )
 
-    async def search_by_name(self, fragment: str, limit: int = 25) -> list[aiosqlite.Row]:
+    async def search_by_name(self, fragment: str, limit: int = 25) -> list[dict[str, Any]]:
         """Teams whose name contains `fragment`, for autocomplete."""
         return await self._db.fetch_all(
             """

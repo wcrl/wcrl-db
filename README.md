@@ -4,6 +4,10 @@ Shared SQLite data-access library for WCRL's Discord bot and its backend API.
 There's one schema and one set of queries, written once here, so both apps
 read and write the club's data the same way instead of drifting apart.
 
+**See [`API.md`](./API.md) for the exact signature and return shape of
+every method** — the reference to check before writing code against this
+library, instead of reading the source.
+
 ## What's in here
 
 ```
@@ -13,13 +17,22 @@ wcrl_db/
 ├── competitors.py       # CompetitorRepository — competitors, competitor_profiles
 ├── teams.py               # TeamRepository — teams, team_members
 ├── bot_state.py            # BotStateRepository — small internal key/value store
-└── schema.sql               # the one schema both apps run against
+├── _util.py                 # internal helpers (timestamp parsing); not public API
+└── schema.sql                 # the one schema both apps run against
 ```
 
 No `discord.py` dependency, no Flask dependency — this package only knows
 about SQLite. Schema changes are additive-only: `schema.sql` is replayed on
 every writable `connect()`, so every statement in it must be idempotent
 (`CREATE TABLE IF NOT EXISTS`, not `ALTER TABLE`).
+
+**The database is fully abstracted**: every method returns plain Python
+types — `dict`/`list[dict]` for row data (never `aiosqlite.Row`), `int`,
+`str`, `bool`, and `datetime` (timezone-aware UTC) for the four timestamp
+columns. Nothing outside `connection.py` ever touches a SQLite-specific
+type. The one deliberate exception is `Database.execute()`'s return value
+(a raw `aiosqlite.Cursor`, for `.lastrowid`) — an escape hatch for ad hoc
+writes, not part of the main, abstracted surface.
 
 ## Install
 
@@ -79,8 +92,14 @@ def list_teams():
             await db.close()
 
     rows = asyncio.run(fetch())
-    return jsonify([dict(r) for r in rows])
+    return jsonify(rows)
 ```
+
+Every repository method already returns plain `dict`s (see `API.md`), so
+there's no `dict(row)` conversion to do here — the only thing to watch is
+that any `datetime` value (there isn't one in this particular result) needs
+`.isoformat()` before `jsonify` if you're on a Flask/Werkzeug version whose
+default JSON encoder doesn't handle `datetime` for you.
 
 `readonly=True` opens the file with SQLite's `mode=ro` — it never calls
 `apply_schema()` or touches WAL pragmas, and any write attempted through it
@@ -101,7 +120,8 @@ Each repository is a thin wrapper around its tables — no business logic,
 just persistence. Decisions like "is this a new registration?" or "is this
 email already claimed by someone else?" belong in the consuming app, built
 on top of these primitives (`get`, `exists`, `get_by_email`, etc.), not in
-the library.
+the library. **See [`API.md`](./API.md) for every method's signature and
+exact return shape** — this section is just an index:
 
 - **`db.competitors`** — `get`, `get_by_email`, `exists`, `upsert`, `count`,
   `get_profile`, `upsert_profile`, `count_with_profile`, `count_by_year`,

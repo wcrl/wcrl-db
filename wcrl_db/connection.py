@@ -25,6 +25,14 @@ Flask view, say) is meant to use this async library: open a short-lived
 `Database(path, readonly=True)` per request inside `asyncio.run(...)`,
 rather than keeping one connection alive across requests — see the
 project README for a worked example.
+
+`fetch_one`/`fetch_all` are the one place `aiosqlite.Row` gets converted
+to a plain `dict` — every repository method (and any ad hoc query a
+consumer runs through these two methods directly) gets native Python
+dicts back, never a SQLite-specific row type. Repositories layer
+`datetime` parsing for known timestamp columns on top of that (see
+`_util.parse_timestamps`); these two methods don't know which columns are
+timestamps, so they can't do that part themselves.
 """
 
 from __future__ import annotations
@@ -95,13 +103,15 @@ class Database:
             await self._conn.close()
             self._conn = None
 
-    async def fetch_one(self, sql: str, params: Iterable[Any] = ()) -> aiosqlite.Row | None:
+    async def fetch_one(self, sql: str, params: Iterable[Any] = ()) -> dict[str, Any] | None:
         async with self.conn.execute(sql, tuple(params)) as cursor:
-            return await cursor.fetchone()
+            row = await cursor.fetchone()
+            return dict(row) if row is not None else None
 
-    async def fetch_all(self, sql: str, params: Iterable[Any] = ()) -> list[aiosqlite.Row]:
+    async def fetch_all(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         async with self.conn.execute(sql, tuple(params)) as cursor:
-            return list(await cursor.fetchall())
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     async def execute(self, sql: str, params: Iterable[Any] = ()) -> aiosqlite.Cursor:
         cursor = await self.conn.execute(sql, tuple(params))

@@ -10,13 +10,17 @@ claimed by someone else?) are app-level judgment calls, not persistence
 concerns, so they stay in the consuming app (the WCRL Discord bot's
 `cogs/registration.py`) and are expressed using `get`/`get_by_email`/
 `exists` before the upsert runs.
+
+Every method returns plain `dict`s, never `aiosqlite.Row`, with
+`registered_at`/`created_at`/`updated_at` parsed into `datetime` objects —
+see `API.md` for the exact shape of each return value.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import aiosqlite
+from ._util import parse_timestamps
 
 if TYPE_CHECKING:
     from .connection import Database
@@ -28,15 +32,17 @@ class CompetitorRepository:
     def __init__(self, db: "Database") -> None:
         self._db = db
 
-    async def get(self, discord_id: int) -> aiosqlite.Row | None:
-        return await self._db.fetch_one(
+    async def get(self, discord_id: int) -> dict[str, Any] | None:
+        row = await self._db.fetch_one(
             "SELECT * FROM competitors WHERE discord_id = ?", (discord_id,)
         )
+        return parse_timestamps(row, "registered_at", "created_at") if row else None
 
-    async def get_by_email(self, email: str) -> aiosqlite.Row | None:
-        return await self._db.fetch_one(
+    async def get_by_email(self, email: str) -> dict[str, Any] | None:
+        row = await self._db.fetch_one(
             "SELECT * FROM competitors WHERE school_email = ?", (email,)
         )
+        return parse_timestamps(row, "registered_at", "created_at") if row else None
 
     async def exists(self, discord_id: int) -> bool:
         row = await self._db.fetch_one(
@@ -44,7 +50,7 @@ class CompetitorRepository:
         )
         return row is not None
 
-    async def upsert(self, discord_id: int, full_name: str, school_email: str) -> aiosqlite.Row:
+    async def upsert(self, discord_id: int, full_name: str, school_email: str) -> dict[str, Any]:
         """Insert or refresh a competitor's row; returns the resulting row."""
         await self._db.execute(
             """
@@ -61,12 +67,13 @@ class CompetitorRepository:
         row = await self._db.fetch_one("SELECT COUNT(*) AS n FROM competitors")
         return row["n"]
 
-    async def get_profile(self, discord_id: int) -> aiosqlite.Row | None:
-        return await self._db.fetch_one(
+    async def get_profile(self, discord_id: int) -> dict[str, Any] | None:
+        row = await self._db.fetch_one(
             "SELECT * FROM competitor_profiles WHERE discord_id = ?", (discord_id,)
         )
+        return parse_timestamps(row, "updated_at") if row else None
 
-    async def upsert_profile(self, discord_id: int, year: str, major: str) -> aiosqlite.Row:
+    async def upsert_profile(self, discord_id: int, year: str, major: str) -> dict[str, Any]:
         """Insert or refresh a competitor's year/major; returns the resulting row."""
         await self._db.execute(
             """
