@@ -39,15 +39,9 @@ async def main():
 asyncio.run(main())
 ```
 
-If you're new to `async`/`await`: it's Python's syntax for "this might take
-a moment (e.g. a database call) — pause here without blocking anything else
-that's running." You don't need to understand it deeply to use this
-library; just remember every call below needs an `await` in front of it.
+### Using it from a synchronous app
 
-### Using it from a synchronous app (e.g. Flask)
-
-Flask view functions are normal (non-async) functions. Wrap one `await`
-call in `asyncio.run(...)`, and open the database **read-only** since a
+Wrap one `await` call in `asyncio.run(...)`, and open the database **read-only** since a
 sync app like this shouldn't be writing to the same file the bot writes to:
 
 ```python
@@ -65,8 +59,6 @@ def get_team_list():
 
     return asyncio.run(fetch())
 ```
-
-See `README.md` for the full Flask example.
 
 ### What you get back
 
