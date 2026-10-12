@@ -41,8 +41,9 @@ asyncio.run(main())
 
 ### Using it from a synchronous app
 
-Wrap one `await` call in `asyncio.run(...)`, and open the database **read-only** since a
-sync app like this shouldn't be writing to the same file the bot writes to:
+Wrap one `await` call in `asyncio.run(...)`, and open the database
+**read-only** — a sync caller like this should only read, never write,
+while another process holds the writable connection:
 
 ```python
 import asyncio
@@ -92,13 +93,13 @@ Creates the object. This doesn't touch the filesystem yet — call
 - `path` (`str`) – path to the SQLite file, or `":memory:"` for a
   temporary in-memory database (handy for tests).
 - `readonly` (`bool`, default `False`) – if `True`, opens the file
-  read-only instead of read/write. Use this from any app that isn't the
-  Discord bot (e.g. a Flask API), so it can safely read the same file the
-  bot is writing to.
+  read-only instead of read/write. Use this from any process that only
+  needs to read, so it can safely read the same file while another
+  process holds the writable connection.
 
 ```python
-db = Database("wcrl.db")                  # read/write (the bot)
-db = Database("wcrl.db", readonly=True)    # read-only (everything else)
+db = Database("wcrl.db")                  # read/write (the writer)
+db = Database("wcrl.db", readonly=True)    # read-only (every other reader)
 ```
 
 ### `await db.connect()`
@@ -110,8 +111,9 @@ Opens the connection. Call this once, right after creating the `Database`.
   any tables that don't exist yet. Safe to call every time your app
   starts — it won't touch tables that already exist.
 - **Read-only** (`readonly=True`): opens the file as-is. Raises
-  `FileNotFoundError` if the file doesn't exist yet — a read-only app
-  can't create the database, so the bot must have run at least once first.
+  `FileNotFoundError` if the file doesn't exist yet — a read-only caller
+  can't create the database, so a writer must have connected at least
+  once first to create it.
 
 **Raises:** `FileNotFoundError` — in read-only mode, if the file doesn't exist.
 
@@ -443,7 +445,7 @@ to whatever app is using it.
 **Returns:** `str`, or `None` if that key has never been set.
 
 ```python
-value = await db.bot_state.get("last_announced_changelog")
+value = await db.bot_state.get("some_key")
 ```
 
 ### `set(key, value)`

@@ -32,15 +32,15 @@ exact return shape** — this section is just an index:
   `search_by_name`, `count`, `count_distinct_members`. Also exports
   `normalize_team_name` (`wcrl_db.teams.normalize_team_name`), which defines
   what `teams.name_normalized` means.
-- **`db.bot_state`** — `get`, `set`. A generic key/value store; currently
-  holds `last_announced_changelog`.
+- **`db.bot_state`** — `get`, `set`. A generic key/value store for whatever
+  small values a consuming app needs to persist.
 
 ## Adding a new domain
 
-A future feature (inventory, parts requests, battery loans) gets its own
-`wcrl_db/<domain>.py` repository, following the pattern above, plus its own
-tables added to `schema.sql`. Wire the new repository into `Database.__init__`
-in `connection.py` the same way the existing three are.
+A new feature gets its own `wcrl_db/<domain>.py` repository, following the
+pattern above, plus its own tables added to `schema.sql`. Wire the new
+repository into `Database.__init__` in `connection.py` the same way the
+existing three are.
 
 ## Tests
 
