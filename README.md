@@ -2,7 +2,7 @@
 
 Internal library to manage the WCRL aiosqlite database. 
 
-**Check [`API.md`](./API.md) for documentation on all available functions.
+**Check [`API.md`](./API.md) for documentation on all available functions.**
 
 ## Install
 
