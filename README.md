@@ -1,53 +1,19 @@
 # wcrl-db
 
-Shared SQLite data-access library for WCRL's Discord bot and its backend API.
-There's one schema and one set of queries, written once here, so both apps
-read and write the club's data the same way instead of drifting apart.
+Internal library to manage the WCRL aiosqlite database. 
 
-**See [`API.md`](./API.md) for the exact signature and return shape of
-every method** — the reference to check before writing code against this
-library, instead of reading the source.
-
-## What's in here
-
-```
-wcrl_db/
-├── __init__.py       # from wcrl_db import Database
-├── connection.py       # Database: connection lifecycle, readonly=True mode
-├── competitors.py       # CompetitorRepository — competitors, competitor_profiles
-├── teams.py               # TeamRepository — teams, team_members
-├── bot_state.py            # BotStateRepository — small internal key/value store
-├── _util.py                 # internal helpers (timestamp parsing); not public API
-└── schema.sql                 # the one schema both apps run against
-```
-
-No `discord.py` dependency, no Flask dependency — this package only knows
-about SQLite. Schema changes are additive-only: `schema.sql` is replayed on
-every writable `connect()`, so every statement in it must be idempotent
-(`CREATE TABLE IF NOT EXISTS`, not `ALTER TABLE`).
-
-**The database is fully abstracted**: every method returns plain Python
-types — `dict`/`list[dict]` for row data (never `aiosqlite.Row`), `int`,
-`str`, `bool`, and `datetime` (timezone-aware UTC) for the four timestamp
-columns. Nothing outside `connection.py` ever touches a SQLite-specific
-type. The one deliberate exception is `Database.execute()`'s return value
-(a raw `aiosqlite.Cursor`, for `.lastrowid`) — an escape hatch for ad hoc
-writes, not part of the main, abstracted surface.
+**Check [`API.md`](./API.md) for documentation on all available functions.
 
 ## Install
 
-While this repo isn't pushed anywhere yet, install it from its local path:
-
+Either install from command line:
 ```bash
-pip install -e /home/srijal/projects/wcrl-db
+pip install git+https://github.com/wcrl/wcrl-db.git
 ```
 
-Once it's pushed to GitHub and tagged, switch to a pinned tag instead of a
-local path or a floating branch — so a change here doesn't silently break a
-consumer until it deliberately bumps the pin:
-
+Or add the following line to your requirements.txt:
 ```
-wcrl-db @ git+https://github.com/<org>/wcrl-db.git@v0.1.0
+wcrl-db @ git+https://github.com/wcrl/wcrl-db.git
 ```
 
 ## Usage from an async app (the Discord bot)

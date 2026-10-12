@@ -1,241 +1,479 @@
-# wcrl_db API reference
+# wcrl_db API Reference
 
-The exact signature and return shape of every public call in this library.
-If you're writing code against `wcrl_db` and want to know what you'll get
-back without reading the source, this is the file to check.
+`wcrl_db` is a small async library for reading and writing the WCRL club's
+SQLite database. It has three parts: a `Database` object that manages the
+connection, and three **repositories** (`competitors`, `teams`, `bot_state`)
+attached to it, each a collection of methods for one group of tables.
 
-**Keep this in sync by hand** whenever a method is added, removed, or its
-return shape changes — there's no generator producing this from the code.
+This page documents every public class and method, with its parameters,
+return value, and a short example. If you just want to get something
+working, start with the Quickstart below.
 
-## Conventions used below
+## Quickstart
 
-- All methods are `async def` unless noted otherwise, and must be awaited.
-- Every method that returns row data returns a plain `dict` (or `list[dict]`)
-  — never `aiosqlite.Row` — with these column types:
-  - `INTEGER` columns → `int`
-  - `TEXT` columns → `str`
-  - the four timestamp columns (`registered_at`, `created_at`, `updated_at`,
-    `joined_at`) → a timezone-aware `datetime.datetime` in UTC, parsed from
-    the stored ISO-8601 text.
-- "Returns `None`" means exactly that — no exception, just `None` — unless
-  stated otherwise.
+### Install
+
+See `README.md` for the current install command.
+
+### Basic usage
+
+Every method in this library is a coroutine — you must `await` it, and
+your code must be inside an `async def` function:
+
+```python
+import asyncio
+from wcrl_db import Database
+
+async def main():
+    db = Database("wcrl.db")   # path to the SQLite file
+    await db.connect()
+
+    competitor = await db.competitors.get(123456789012345678)
+    if competitor is None:
+        print("Not registered yet.")
+    else:
+        print(competitor["full_name"])
+
+    await db.close()
+
+asyncio.run(main())
+```
+
+If you're new to `async`/`await`: it's Python's syntax for "this might take
+a moment (e.g. a database call) — pause here without blocking anything else
+that's running." You don't need to understand it deeply to use this
+library; just remember every call below needs an `await` in front of it.
+
+### Using it from a synchronous app (e.g. Flask)
+
+Flask view functions are normal (non-async) functions. Wrap one `await`
+call in `asyncio.run(...)`, and open the database **read-only** since a
+sync app like this shouldn't be writing to the same file the bot writes to:
+
+```python
+import asyncio
+from wcrl_db import Database
+
+def get_team_list():
+    async def fetch():
+        db = Database("wcrl.db", readonly=True)
+        await db.connect()
+        try:
+            return await db.teams.list_with_member_counts()
+        finally:
+            await db.close()
+
+    return asyncio.run(fetch())
+```
+
+See `README.md` for the full Flask example.
+
+### What you get back
+
+You never see raw SQL types from this library — every method returns
+ordinary Python values:
+
+| SQL column type | What you get in Python |
+|---|---|
+| `INTEGER` | `int` |
+| `TEXT` | `str` |
+| a timestamp column (`registered_at`, `created_at`, `updated_at`, `joined_at`) | `datetime.datetime` (timezone-aware, UTC) |
+
+A row is a plain `dict`, so you read a field with `row["column_name"]`. A
+query that can return nothing (e.g. "find this competitor") gives you
+`None` instead of raising an error — always check for that before using
+the result.
 
 ---
 
-## `Database` (`from wcrl_db import Database`)
+## `Database`
 
-### `Database(path: str, *, readonly: bool = False)`
-Constructs the object; does not touch the filesystem or open a connection.
-`path` is the SQLite file path (or `:memory:`). Sets up `.competitors`,
-`.teams`, `.bot_state` as attributes immediately.
+The object that owns the connection. Create one, `connect()` it, and it
+gives you `.competitors`, `.teams`, and `.bot_state` to work with.
 
-### `await db.connect() -> None`
-Opens the connection.
-- **Writable (default, `readonly=False`)**: creates the parent directory if
-  needed, turns on `foreign_keys` and `journal_mode=WAL`, then replays
-  `schema.sql` (idempotent — safe on every startup).
-- **Read-only (`readonly=True`)**: opens the file with SQLite's `mode=ro`.
-  Raises `FileNotFoundError` if the file doesn't already exist. Never
-  touches pragmas or the schema.
+### `Database(path, *, readonly=False)`
 
-### `await db.close() -> None`
-Closes the connection. Safe to call even if never connected.
+Creates the object. This doesn't touch the filesystem yet — call
+`connect()` next.
 
-### `await db.apply_schema() -> None`
-Replays `schema.sql` against the current connection. Called automatically
-by `connect()` in writable mode; you shouldn't normally need to call it
-yourself.
+**Parameters**
+- `path` (`str`) – path to the SQLite file, or `":memory:"` for a
+  temporary in-memory database (handy for tests).
+- `readonly` (`bool`, default `False`) – if `True`, opens the file
+  read-only instead of read/write. Use this from any app that isn't the
+  Discord bot (e.g. a Flask API), so it can safely read the same file the
+  bot is writing to.
 
-### `await db.fetch_one(sql: str, params: Iterable = ()) -> dict | None`
-Escape hatch for an ad hoc read `wcrl_db` doesn't already provide a method
-for. Returns the first matching row as a `dict` (column name → Python
-value, per the conventions above — **no timestamp parsing**, since this
-generic method doesn't know which columns are timestamps), or `None` if no
-row matched.
+```python
+db = Database("wcrl.db")                  # read/write (the bot)
+db = Database("wcrl.db", readonly=True)    # read-only (everything else)
+```
 
-### `await db.fetch_all(sql: str, params: Iterable = ()) -> list[dict]`
-Same as `fetch_one`, but every matching row, each as a `dict`. Empty list
-if nothing matched.
+### `await db.connect()`
 
-### `await db.execute(sql: str, params: Iterable = ()) -> aiosqlite.Cursor`
-Escape hatch for an ad hoc write. **This is the one place `aiosqlite` isn't
-hidden** — you get the raw cursor back (e.g. for `.lastrowid`). Commits
-automatically. Prefer a repository method over this and `fetch_one`/
-`fetch_all` wherever one already exists; they exist mainly for tests and
-for genuinely one-off queries.
+Opens the connection. Call this once, right after creating the `Database`.
+
+- **Read/write** (default): creates the containing folder if it doesn't
+  exist, turns on two SQLite settings the schema relies on, then creates
+  any tables that don't exist yet. Safe to call every time your app
+  starts — it won't touch tables that already exist.
+- **Read-only** (`readonly=True`): opens the file as-is. Raises
+  `FileNotFoundError` if the file doesn't exist yet — a read-only app
+  can't create the database, so the bot must have run at least once first.
+
+**Raises:** `FileNotFoundError` — in read-only mode, if the file doesn't exist.
+
+### `await db.close()`
+
+Closes the connection. Always call this when you're done (a `finally`
+block, as in the Quickstart above, makes sure it happens even on error).
+Safe to call even if you never connected.
+
+### `await db.apply_schema()`
+
+Creates any tables that don't exist yet. `connect()` already calls this
+for you in read/write mode — you'll rarely need to call it yourself.
+
+### `await db.fetch_one(sql, params=())`
+
+Runs a SQL query yourself and returns the first matching row. This is an
+**escape hatch** — reach for a method on `db.competitors`/`db.teams`/
+`db.bot_state` first; only use this for a genuinely one-off query that
+doesn't already exist as a method.
+
+**Parameters**
+- `sql` (`str`) – the SQL query.
+- `params` (tuple or list, optional) – values to fill in for `?`
+  placeholders in the query.
+
+**Returns:** `dict`, or `None` if nothing matched.
+
+```python
+row = await db.fetch_one("SELECT * FROM competitors WHERE discord_id = ?", (123,))
+```
+
+### `await db.fetch_all(sql, params=())`
+
+Same as `fetch_one`, but returns every matching row.
+
+**Returns:** `list[dict]` — empty list if nothing matched.
+
+### `await db.execute(sql, params=())`
+
+Runs a SQL statement that changes data (`INSERT`/`UPDATE`/`DELETE`).
+Another escape hatch, same guidance as `fetch_one`: prefer an existing
+repository method first.
+
+**Returns:** the raw database cursor (useful for `.lastrowid` after an
+`INSERT`). This is the one place this library hands back a
+driver-specific object instead of a plain Python value.
 
 ---
 
-## `db.competitors` (`CompetitorRepository`)
+## `db.competitors`
 
-Backs the `competitors` and `competitor_profiles` tables.
+Everything about competitors and their optional year/major profile. Backs
+the `competitors` and `competitor_profiles` tables.
 
-### `get(discord_id: int) -> dict | None`
-`None` if no competitor has that Discord id. Otherwise:
+A **competitor** dict always looks like this:
 
-| key | type |
+| Key | Type | Notes |
+|---|---|---|
+| `discord_id` | `int` | |
+| `full_name` | `str` | |
+| `school_email` | `str` | always stored lowercase |
+| `registered_at` | `datetime` | |
+| `created_at` | `datetime` | |
+
+A **profile** dict (year/major) always looks like this:
+
+| Key | Type | Notes |
+|---|---|---|
+| `discord_id` | `int` | |
+| `year` | `str` | |
+| `major` | `str` | |
+| `updated_at` | `datetime` | |
+
+### `get(discord_id)`
+
+Look up a competitor.
+
+**Parameters**
+- `discord_id` (`int`)
+
+**Returns:** a competitor dict (shape above), or `None` if there isn't one.
+
+```python
+competitor = await db.competitors.get(123456789012345678)
+```
+
+### `get_by_email(email)`
+
+Look up a competitor by their school email instead of their Discord ID.
+Matching ignores case.
+
+**Parameters**
+- `email` (`str`)
+
+**Returns:** a competitor dict, or `None` if no competitor has that email.
+
+### `exists(discord_id)`
+
+A cheap yes/no check — use this instead of `get()` when you don't actually
+need the competitor's data.
+
+**Returns:** `bool`
+
+### `upsert(discord_id, full_name, school_email)`
+
+Creates a competitor, or updates their name/email if they already exist.
+("Upsert" = update if present, insert if not.)
+
+This method does **not** check whether `school_email` already belongs to
+someone else — call `get_by_email()` yourself first and decide what to do
+if it does.
+
+**Parameters**
+- `discord_id` (`int`)
+- `full_name` (`str`)
+- `school_email` (`str`)
+
+**Returns:** the resulting competitor dict (never `None`).
+
+```python
+competitor = await db.competitors.upsert(123456789012345678, "Jane Doe", "jane@uni.edu")
+```
+
+### `count()`
+
+**Returns:** `int` – total number of competitors.
+
+### `get_profile(discord_id)`
+
+**Returns:** a profile dict (shape above), or `None` if this competitor
+hasn't filled in their year/major yet.
+
+### `upsert_profile(discord_id, year, major)`
+
+Creates or updates a competitor's year/major.
+
+**Parameters**
+- `discord_id` (`int`)
+- `year` (`str`)
+- `major` (`str`)
+
+**Returns:** the resulting profile dict (never `None`).
+
+**Raises:** `IntegrityError` if `discord_id` doesn't belong to an existing
+competitor — create the competitor first with `upsert()`.
+
+### `count_with_profile()`
+
+**Returns:** `int` – how many competitors have filled in a profile.
+
+### `count_by_year()`
+
+**Returns:** `list[(str, int)]` – one `(year, count)` pair per year that's
+actually on file, sorted by count (most common first).
+
+### `count_by_major()`
+
+Same as `count_by_year()`, grouped by major instead.
+
+---
+
+## `db.teams`
+
+Everything about teams and their members. Backs the `teams` and
+`team_members` tables.
+
+A **team** dict always looks like this:
+
+| Key | Type | Notes |
+|---|---|---|
+| `team_id` | `int` | |
+| `name` | `str` | the display name, e.g. `"Bot Squad"` |
+| `name_normalized` | `str` | lowercased, whitespace-collapsed — used internally for matching |
+| `role_id` | `int` | Discord role ID |
+| `channel_id` | `int` | Discord channel ID |
+| `created_by` | `int` | the creator's `discord_id` |
+| `created_at` | `datetime` | |
+
+### `get_by_id(team_id)`
+
+**Returns:** a team dict, or `None` if `team_id` doesn't exist.
+
+### `get_for_member(discord_id)`
+
+Find the team a competitor belongs to.
+
+**Returns:** a team dict, or `None` if they're not on a team.
+
+### `get_by_name(name)`
+
+Find a team by its display name. Matching ignores case and collapses
+extra whitespace, so `"bot   squad"` finds `"Bot Squad"` — you don't need
+to clean up `name` yourself first.
+
+**Returns:** a team dict, or `None` if no team matches.
+
+```python
+team = await db.teams.get_by_name("Bot Squad")
+```
+
+### `get_by_channel(channel_id)`
+
+Find the team whose private channel is `channel_id`.
+
+**Returns:** a team dict, or `None` if no team matches.
+
+### `create(name, role_id, channel_id, created_by)`
+
+Creates a new team.
+
+**Parameters**
+- `name` (`str`) – the display name.
+- `role_id` (`int`) – the Discord role already created for this team.
+- `channel_id` (`int`) – the Discord channel already created for this team.
+- `created_by` (`int`) – the creating competitor's `discord_id`.
+
+**Returns:** the new team dict (never `None`).
+
+**Raises:** `IntegrityError` if the name is already taken (ignoring case/
+whitespace), if `role_id` or `channel_id` is already used by another team,
+or if `created_by` isn't an existing competitor.
+
+```python
+team = await db.teams.create("Bot Squad", role_id=1111, channel_id=2222, created_by=123456789012345678)
+```
+
+### `delete(team_id)`
+
+Deletes a team. Every member's `team_members` row is removed automatically
+along with it. Does nothing (no error) if `team_id` doesn't exist.
+
+### `add_member(team_id, discord_id)`
+
+Adds a competitor to a team.
+
+**Raises:** `IntegrityError` if `discord_id` is already on a team (a
+competitor can only be on one team at a time), or if either ID doesn't
+exist.
+
+### `remove_member(discord_id)`
+
+Removes a competitor from their team. Does nothing if they're not on one.
+
+### `count_members(team_id)`
+
+**Returns:** `int` – how many competitors are currently on this team.
+
+### `list_members(team_id)`
+
+Get a team's roster.
+
+**Returns:** `list[dict]`, oldest member first, each shaped like:
+
+| Key | Type |
 |---|---|
 | `discord_id` | `int` |
 | `full_name` | `str` |
-| `school_email` | `str` (stored lowercase) |
-| `registered_at` | `datetime` |
-| `created_at` | `datetime` |
 
-### `get_by_email(email: str) -> dict | None`
-Same shape as `get()`. Matches case-insensitively (the column is
-`COLLATE NOCASE`). `None` if no competitor has that email.
+Empty list if the team has no members.
 
-### `exists(discord_id: int) -> bool`
-Whether a `competitors` row exists for `discord_id`.
+### `list_with_member_counts(order="name")`
 
-### `upsert(discord_id: int, full_name: str, school_email: str) -> dict`
-Inserts a new row, or updates `full_name`/`school_email` in place if
-`discord_id` already exists. Always returns a dict (never `None`) — same
-shape as `get()`. Does **not** check whether `school_email` is already
-claimed by a different `discord_id`; that's the caller's job (see
-`get_by_email` above).
+Get every team, with how many members each has.
 
-### `count() -> int`
-Total rows in `competitors`.
+**Parameters**
+- `order` (`str`, default `"name"`) – `"name"` sorts alphabetically;
+  `"size"` sorts by member count, biggest team first.
 
-### `get_profile(discord_id: int) -> dict | None`
-`None` if the competitor has no `competitor_profiles` row (i.e. hasn't
-supplied year/major yet). Otherwise:
+**Raises:** `KeyError` if `order` is anything other than `"name"` or `"size"`.
 
-| key | type |
-|---|---|
-| `discord_id` | `int` |
-| `year` | `str` |
-| `major` | `str` |
-| `updated_at` | `datetime` |
+**Returns:** `list[dict]`, each shaped like:
 
-### `upsert_profile(discord_id: int, year: str, major: str) -> dict`
-Inserts or updates the profile row. Always returns a dict — same shape as
-`get_profile()`. Raises a foreign-key `IntegrityError` if `discord_id`
-has no `competitors` row at all.
-
-### `count_with_profile() -> int`
-Total rows in `competitor_profiles`.
-
-### `count_by_year() -> list[tuple[str, int]]`
-`(year, count)` pairs, one per distinct `year` value, ordered by count
-descending then year ascending. Empty list if no profiles exist.
-
-### `count_by_major() -> list[tuple[str, int]]`
-Same shape as `count_by_year()`, grouped by `major` instead.
-
----
-
-## `db.teams` (`TeamRepository`)
-
-Backs the `teams` and `team_members` tables.
-
-A full "team row" (returned by `get_by_id`, `get_for_member`, `get_by_name`,
-`get_by_channel`, and `create`) always has this shape:
-
-| key | type |
-|---|---|
-| `team_id` | `int` |
-| `name` | `str` |
-| `name_normalized` | `str` |
-| `role_id` | `int` |
-| `channel_id` | `int` |
-| `created_by` | `int` (a `discord_id`) |
-| `created_at` | `datetime` |
-
-### `get_by_id(team_id: int) -> dict | None`
-Full team row, or `None` if `team_id` doesn't exist.
-
-### `get_for_member(discord_id: int) -> dict | None`
-The full team row for the team `discord_id` belongs to, or `None` if
-they're not on a team.
-
-### `get_by_name(name: str) -> dict | None`
-Full team row, matched case/whitespace-insensitively (normalizes `name`
-internally — you don't need to pre-normalize). `None` if no team matches.
-
-### `get_by_channel(channel_id: int) -> dict | None`
-Full team row for the team whose private channel is `channel_id`. `None`
-if no team matches.
-
-### `create(name: str, role_id: int, channel_id: int, created_by: int) -> dict`
-Inserts a new team (normalizing `name` into `name_normalized` internally)
-and returns the full team row — always a dict, never `None`. Raises
-`IntegrityError` if `name_normalized`, `role_id`, or `channel_id` collides
-with an existing team, or if `created_by` isn't an existing competitor.
-
-### `delete(team_id: int) -> None`
-Deletes the team row. `team_members` rows for it cascade-delete
-automatically (`ON DELETE CASCADE`, enforced since `connect()` turns on
-`foreign_keys`). No-op if `team_id` doesn't exist.
-
-### `add_member(team_id: int, discord_id: int) -> None`
-Inserts a `team_members` row. Raises `IntegrityError` if `discord_id` is
-already on a team (the one-team-per-competitor unique index), or if
-either id doesn't reference an existing row.
-
-### `remove_member(discord_id: int) -> None`
-Deletes `discord_id`'s `team_members` row, if any. No-op if they're not on
-a team.
-
-### `count_members(team_id: int) -> int`
-Number of members currently on `team_id`.
-
-### `list_members(team_id: int) -> list[dict]`
-A team's roster, oldest member first. Each dict:
-
-| key | type |
-|---|---|
-| `discord_id` | `int` |
-| `full_name` | `str` |
-
-Empty list if the team has no members (or doesn't exist).
-
-### `list_with_member_counts(order: str = "name") -> list[dict]`
-Every team in the database. Each dict:
-
-| key | type |
+| Key | Type |
 |---|---|
 | `name` | `str` |
 | `member_count` | `int` |
 
-`order="name"` sorts alphabetically (case-insensitive); `order="size"`
-sorts by `member_count` descending, then name. Raises `KeyError` if
-`order` is anything else.
+```python
+teams = await db.teams.list_with_member_counts(order="size")
+for team in teams:
+    print(team["name"], team["member_count"])
+```
 
-### `search_by_name(fragment: str, limit: int = 25) -> list[dict]`
-Teams whose name contains `fragment` (case-insensitive substring match;
-literal `%`/`_` in `fragment` are matched literally, not as SQL wildcards).
-Each dict has just one key:
+### `search_by_name(fragment, limit=25)`
 
-| key | type |
-|---|---|
-| `name` | `str` |
+Find teams whose name contains `fragment` — built for autocomplete-style
+search boxes. Matching ignores case.
 
-Ordered alphabetically, capped at `limit`. Empty list if nothing matches.
+**Returns:** `list[dict]`, up to `limit` results, each just `{"name": str}`.
 
-### `count() -> int`
-Total rows in `teams`.
+### `count()`
 
-### `count_distinct_members() -> int`
-Number of distinct competitors who are on *some* team.
+**Returns:** `int` – total number of teams.
 
-### `normalize_team_name(name: str) -> str` (module-level function, not a method)
-`wcrl_db.teams.normalize_team_name` — collapses internal whitespace and
-casefolds. This is a plain sync function, not a repository method; import
-it directly (`from wcrl_db.teams import normalize_team_name`) rather than
-through `db.teams`.
+### `count_distinct_members()`
+
+**Returns:** `int` – how many competitors are on *some* team (as opposed
+to not being on any team at all).
+
+### Helper function: `normalize_team_name(name)`
+
+Not a method on `db.teams` — a plain function you import separately:
+
+```python
+from wcrl_db.teams import normalize_team_name
+
+normalize_team_name("  Bot   Squad  ")   # -> "bot squad"
+```
+
+Collapses whitespace and lowercases, the same way `get_by_name()` and
+`create()` do internally. You won't usually need to call this yourself —
+it's exposed mainly so other code can match the library's exact rules if
+it needs to.
 
 ---
 
-## `db.bot_state` (`BotStateRepository`)
+## `db.bot_state`
 
-Backs the `bot_state` key/value table. Generic — has no built-in notion of
-what keys exist (today, only `last_announced_changelog` is used, by the
-Discord bot).
+A generic key → value store for small bits of internal bookkeeping. Backs
+the `bot_state` table. It doesn't know or care what keys exist — that's up
+to whatever app is using it.
 
-### `get(key: str) -> str | None`
-The stored value for `key`, or `None` if that key has never been set.
+### `get(key)`
 
-### `set(key: str, value: str) -> None`
-Inserts or overwrites the value for `key`.
+**Parameters**
+- `key` (`str`)
+
+**Returns:** `str`, or `None` if that key has never been set.
+
+```python
+value = await db.bot_state.get("last_announced_changelog")
+```
+
+### `set(key, value)`
+
+Stores a value, overwriting whatever was there before.
+
+**Parameters**
+- `key` (`str`)
+- `value` (`str`)
+
+---
+
+## Errors you might run into
+
+| Error | When it happens |
+|---|---|
+| `FileNotFoundError` | You opened `Database(path, readonly=True)` but `path` doesn't exist yet. |
+| `aiosqlite.IntegrityError` | A write would break a database rule — a duplicate email, a duplicate team name, a competitor already on a team, etc. Each method's **Raises** note above tells you when to expect this. |
+| `sqlite3.OperationalError` | You tried to write through a read-only (`readonly=True`) connection. |
+
+---
+
+**Keeping this file up to date:** whenever a method is added, removed, or
+its parameters/return shape change, update the matching section above in
+the same commit.
