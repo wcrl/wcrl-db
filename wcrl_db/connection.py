@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 import aiosqlite
 
+from .leaderboard import LeaderboardRepository
 from .bot_state import BotStateRepository
 from .competitors import CompetitorRepository
 from .teams import TeamRepository
@@ -25,6 +26,7 @@ class Database:
         self.readonly = readonly
         self._conn: aiosqlite.Connection | None = None
 
+        self.leaderboard = LeaderboardRepository(self)
         self.competitors = CompetitorRepository(self)
         self.teams = TeamRepository(self)
         self.bot_state = BotStateRepository(self)

@@ -4,6 +4,14 @@
 -- never modified. Every statement here must be idempotent (IF NOT EXISTS) —
 -- the whole file is replayed on every startup.
 
+CREATE TABLE IF NOT EXISTS leaderboard (
+    team_id INTEGER PRIMARY KEY,
+    wins INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (team_id)
+        REFERENCES teams(team_id)
+        ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS competitors (
     discord_id   INTEGER PRIMARY KEY,
     full_name    TEXT NOT NULL,
